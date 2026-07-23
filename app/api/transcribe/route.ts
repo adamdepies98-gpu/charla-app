@@ -39,6 +39,10 @@ export async function POST(request: NextRequest) {
   const outgoingForm = new FormData();
   outgoingForm.append("file", audioFile, audioFile.name || "audio.webm");
   outgoingForm.append("model", "whisper-1");
+  // Force Spanish — without this, Whisper auto-detects language per request,
+  // which is unreliable on short or quiet clips and was returning transcripts
+  // in random languages.
+  outgoingForm.append("language", "es");
 
   try {
     const openaiResponse = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
