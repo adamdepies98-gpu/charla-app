@@ -199,7 +199,7 @@ export default function Home() {
     } else {
       utterance.lang = "es-ES";
     }
-    utterance.onend = () => setStatus("idle");
+    utterance.onend = () => void startRecording();
     utterance.onerror = () => setStatus("idle");
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
