@@ -2,12 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SpanishLevel } from "@/lib/sofia-prompt";
+import {
+  CONVERSATION_TOPICS,
+  buildKickoffInstruction,
+  pickRandomTopic,
+  type ConversationTopic,
+} from "@/lib/conversation-topics";
 
 type Status = "idle" | "recording" | "transcribing" | "thinking" | "speaking";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /** Hidden stage-direction turns (topic kickoffs) are sent to the API but never rendered. */
+  hidden?: boolean;
 }
 
 const LEVELS: SpanishLevel[] = ["Beginner", "Intermediate", "Advanced"];
@@ -47,6 +55,7 @@ function pickSpanishVoice(): SpeechSynthesisVoice | null {
 
 export default function Home() {
   const [level, setLevel] = useState<SpanishLevel | null>(null);
+  const [topic, setTopic] = useState<ConversationTopic | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +64,20 @@ export default function Home() {
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  // Source of truth for conversation history. The auto-restart loop
+  // (speak -> onend -> startRecording -> ... -> handleRecordingComplete)
+  // chains through closures created on earlier renders, so reading the
+  // `messages` state variable inside those closures returns stale data.
+  // A ref is mutated in place and always reflects the latest history
+  // regardless of which render's closure is reading it.
+  const messagesRef = useRef<ChatMessage[]>([]);
+
+  function appendMessage(message: ChatMessage): ChatMessage[] {
+    const updated = [...messagesRef.current, message];
+    messagesRef.current = updated;
+    setMessages(updated);
+    return updated;
+  }
 
   // Prime the voice list — Chrome loads voices asynchronously.
   useEffect(() => {
@@ -77,15 +100,42 @@ export default function Home() {
     };
   }, []);
 
-  function resetToLevelSelect() {
+  function stopMediaAndSpeech() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaRecorderRef.current = null;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+  }
+
+  function resetToLevelSelect() {
+    stopMediaAndSpeech();
     setLevel(null);
+    setTopic(null);
+    messagesRef.current = [];
     setMessages([]);
     setStatus("idle");
     setError(null);
+  }
+
+  function resetToTopicSelect() {
+    stopMediaAndSpeech();
+    setTopic(null);
+    messagesRef.current = [];
+    setMessages([]);
+    setStatus("idle");
+    setError(null);
+  }
+
+  async function startConversation(selectedTopic: ConversationTopic) {
+    setTopic(selectedTopic);
+    const kickoff: ChatMessage = {
+      role: "user",
+      content: buildKickoffInstruction(selectedTopic),
+      hidden: true,
+    };
+    const updatedHistory = appendMessage(kickoff);
+    await requestSofiaReply(updatedHistory);
   }
 
   async function startRecording() {
@@ -148,9 +198,7 @@ export default function Home() {
         return;
       }
 
-      const userMessage: ChatMessage = { role: "user", content: text };
-      const updatedHistory = [...messages, userMessage];
-      setMessages(updatedHistory);
+      const updatedHistory = appendMessage({ role: "user", content: text });
       await requestSofiaReply(updatedHistory);
     } catch (err) {
       console.error("Transcription error:", err);
@@ -168,13 +216,16 @@ export default function Home() {
       const res = await fetch("/api/converse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ history, level }),
+        body: JSON.stringify({
+          history: history.map(({ role, content }) => ({ role, content })),
+          level,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Sofía couldn't respond.");
 
       const reply: string = data.reply;
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      appendMessage({ role: "assistant", content: reply });
       speak(reply);
     } catch (err) {
       console.error("Converse error:", err);
@@ -231,7 +282,47 @@ export default function Home() {
     );
   }
 
+  if (!topic) {
+    return (
+      <div className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-10 dark:bg-black">
+        <div className="w-full max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <button
+            onClick={resetToLevelSelect}
+            className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            ← Change level
+          </button>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            What should we talk about?
+          </h1>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+            Sofía will open the conversation. Pick a topic, or let her surprise you.
+          </p>
+          <button
+            onClick={() => void startConversation(pickRandomTopic())}
+            className="mt-5 w-full rounded-xl bg-zinc-900 px-4 py-3 text-left text-sm font-semibold text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            🎲 Sorpréndeme (surprise me)
+          </button>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {CONVERSATION_TOPICS.map((option) => (
+              <button
+                key={option.id}
+                onClick={() => void startConversation(option)}
+                className="rounded-xl border border-zinc-200 px-3 py-3 text-left text-sm font-medium text-zinc-800 transition-colors hover:border-zinc-900 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:border-zinc-50 dark:hover:bg-zinc-900"
+              >
+                <span className="mr-1.5">{option.emoji}</span>
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isRecordButtonDisabled = status !== "idle" && status !== "recording";
+  const visibleMessages = messages.filter((message) => !message.hidden);
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -240,24 +331,34 @@ export default function Home() {
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
             Charla con Sofía
           </p>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">{level}</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {level} · {topic.emoji} {topic.label}
+          </p>
         </div>
-        <button
-          onClick={resetToLevelSelect}
-          className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
-        >
-          Change level
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={resetToTopicSelect}
+            className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            New topic
+          </button>
+          <button
+            onClick={resetToLevelSelect}
+            className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            Change level
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <p className="mt-10 text-center text-sm text-zinc-400 dark:text-zinc-600">
-            Tap the mic below and say hello to Sofía.
+            Sofía is getting the conversation started...
           </p>
         ) : (
           <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
-            {messages.map((message, index) => (
+            {visibleMessages.map((message, index) => (
               <div
                 key={index}
                 className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
