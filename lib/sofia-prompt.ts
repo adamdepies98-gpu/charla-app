@@ -11,7 +11,7 @@ const LEVEL_GUIDANCE: Record<SpanishLevel, string> = {
 
 const CORRECTION_GUIDANCE: Record<SpanishLevel, string> = {
   Beginner:
-    'Give the correction itself in English, since a Beginner may not follow a Spanish grammar note: name what was wrong and give the correct Spanish form in one short English clause (for example, "You\'d say \'fui\', not \'iba\', there."). Everything else in your reply — your reaction to what they said and the follow-up question — must still be in Spanish.',
+    'The correction itself must be written in plain English, never in Spanish — a Beginner cannot read a Spanish grammar note yet. Put the English correction FIRST, as its own sentence, before anything else in the reply; only after that do you switch to Spanish for your reaction and follow-up question. Follow this exact pattern. If the learner says "Yo ir al mercado ayer", a correct reply is exactly: "You\'d say \'fui\', not \'ir\', to talk about the past. ¡Qué bien! ¿Qué compraste?" Notice the first sentence is 100% English and the rest is 100% Spanish — never blend the two in one sentence, and never write the correction in Spanish.',
   Intermediate:
     'Give the correction in Spanish: name what was wrong and give the correct form in one short clause (for example, "Se dice \'fui\', no \'iba\'.").',
   Advanced:
